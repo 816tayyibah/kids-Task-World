@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BrightDay Kids Planner</title>
+  <meta name="theme-color" content="#fff8ef">
+  <meta name="description" content="A playful weekly planner for kids with schedules, checklists, stars, and awards.">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon-192.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@400;600;700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Sparkly routine tracker</p>
+        <h1>Weekly Planner</h1>
+        <p id="todayLabel" class="today-label"></p>
+      </div>
+
+      <div class="hero-stats">
+        <div class="stat-pill">
+          <span class="stat-icon">&#11088;</span>
+          <div>
+            <strong id="starCount">0</strong>
+            <span>stars earned</span>
+          </div>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-icon">&#127942;</span>
+          <div>
+            <strong id="badgeCount">0</strong>
+            <span>awards unlocked</span>
+          </div>
+        </div>
+        <button id="installAppBtn" class="install-app-btn" type="button" hidden>Install App</button>
+        <button id="resetProgressBtn" class="reset-progress-btn" type="button">Reset Progress</button>
+      </div>
+    </header>
+
+    <main class="planner-app">
+      <section class="picker-row child-row" id="childSelector"></section>
+      <section class="picker-row day-row" id="daySelector"></section>
+      <section class="picker-row view-row" id="viewSelector"></section>
+
+      <section class="main-card">
+        <div id="scheduleView" class="view-panel active"></div>
+        <div id="checklistView" class="view-panel"></div>
+        <div id="starsView" class="view-panel"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="scheduleEditorModal" class="modal-shell" hidden>
+    <div class="modal-backdrop" data-close-editor="true"></div>
+    <section class="modal-card">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">Schedule Editor</p>
+          <h2 id="editorModalTitle">Edit Schedule</h2>
+        </div>
+        <button id="closeScheduleEditorBtn" class="modal-close-btn" type="button" aria-label="Close editor">Close</button>
+      </div>
+      <section class="picker-row" id="editorDaySelector"></section>
+      <div id="scheduleEditorContent"></div>
+    </section>
+  </div>
+
+  <template id="scheduleItemTemplate">
+    <article class="schedule-item">
+      <div class="time-chip"></div>
+      <div class="activity-copy">
+        <h3></h3>
+        <p></p>
+      </div>
+      <button class="mini-star" type="button" aria-label="Mark finished">+&#11088;</button>
+    </article>
+  </template>
+
+  <template id="taskItemTemplate">
+    <label class="task-item">
+      <input type="checkbox">
+      <span class="checkmark"></span>
+      <span class="task-copy">
+        <strong></strong>
+        <small></small>
+      </span>
+      <span class="task-points"></span>
+    </label>
+  </template>
+
+
+</body>
+</html>
