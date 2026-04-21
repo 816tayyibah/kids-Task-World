@@ -96,7 +96,7 @@ let state = {
   dayByChild: {},   // BUG FIX: each child has their own selected day
   tab:      "Schedule",
   children: [],
-  schedules:            {},  // { childName: { mon:[...], ... } }
+  schedules:            {},  // { mon:[...], tue:[...], ... }
   starsByChild:         {},  // { childName: number }
   badgesByChild:        {},  // { childName: string[] }
   completedTasks:       {},  // { "child__date__day__index": true }
@@ -224,9 +224,8 @@ async function loadFamilyData() {
       state.dayByChild             = d.dayByChild             || {};
 
       // ✅ Clean nested arrays immediately on load
-      state.schedules = ensureSchedulesForChildren(
-        d.children || [],
-        cleanAllSchedules(d.schedules || {})
+      state.schedules = ensureSharedSchedule(
+        cleanSharedSchedules(d.schedules || {})
       );
 
       // ✅ Save the cleaned version back to Firestore right away
@@ -234,11 +233,11 @@ async function loadFamilyData() {
       console.log("✅ Cleaned and re-saved schedules to Firestore");
 
     } else {
-      state.children = ["Sumaiya"];
-      state.dayByChild = { Sumaiya: "mon" };
-      state.starsByChild = { Sumaiya: 0 };
-      state.badgesByChild = { Sumaiya: [] };
-      state.schedules = ensureSchedulesForChildren(state.children, {});
+      state.children = [];
+      state.dayByChild = {};
+      state.starsByChild = {};
+      state.badgesByChild = {};
+      state.schedules = ensureSharedSchedule({});
       await setDoc(userDocRef, buildPayload());
     }
     state.child = state.children[0] ?? null;
@@ -261,9 +260,8 @@ function subscribeToRemoteChanges() {
     state.dayByChild             = d.dayByChild             || state.dayByChild;
 
     // ✅ Always clean on every snapshot received
-    state.schedules = ensureSchedulesForChildren(
-      state.children,
-      cleanAllSchedules(d.schedules || state.schedules)
+    state.schedules = ensureSharedSchedule(
+      cleanSharedSchedules(d.schedules || state.schedules)
     );
 
     if (!state.children.includes(state.child)) state.child = state.children[0] ?? null;
@@ -289,14 +287,11 @@ function removeNestedArrays(obj) {
 function buildPayload() {
   const cleanSchedules = {};
 
-  for (const child in state.schedules) {
-    cleanSchedules[child] = {};
-    for (const day in state.schedules[child]) {
-      cleanSchedules[child][day] = flattenEntries(
-        state.schedules[child][day] ?? []
-      ).map(scheduleEntryToObject).filter(Boolean);
-    }
-  }
+  plannerData.days.forEach(({ key }) => {
+    cleanSchedules[key] = flattenEntries(
+      state.schedules[key] ?? []
+    ).map(scheduleEntryToObject).filter(Boolean);
+  });
 
   // Convert all keys to plain objects (Firestore safe)
   return {
@@ -343,18 +338,30 @@ function flattenEntries(entries) {
     .map(normalizeScheduleEntry)
     .filter(Boolean);
 }
-function cleanAllSchedules(schedulesObj) {
+function cleanSharedSchedules(schedulesObj) {
   if (!schedulesObj || typeof schedulesObj !== "object") return {};
   const clean = {};
-  for (const child in schedulesObj) {
-    clean[child] = {};
-    for (const day in schedulesObj[child]) {
-      const entries = schedulesObj[child][day];
-      const cleaned = flattenEntries(entries ?? []);
-      console.log(`📅 ${child} ${day}: ${cleaned.length} entries`);
-      clean[child][day] = cleaned;
+
+  plannerData.days.forEach(({ key }) => {
+    let sourceEntries = schedulesObj[key];
+
+    if (!sourceEntries) {
+      for (const maybeChild in schedulesObj) {
+        if (schedulesObj[maybeChild] && typeof schedulesObj[maybeChild] === "object") {
+          const nestedEntries = schedulesObj[maybeChild][key];
+          if (flattenEntries(nestedEntries ?? []).length > 0) {
+            sourceEntries = nestedEntries;
+            break;
+          }
+        }
+      }
     }
-  }
+
+    const cleaned = flattenEntries(sourceEntries ?? []);
+    console.log(`📅 shared ${key}: ${cleaned.length} entries`);
+    clean[key] = cleaned;
+  });
+
   return clean;
 }
 
@@ -388,18 +395,14 @@ function scheduleEntryToObject(entry) {
   return { time, title, detail, color };
 }
 
-function ensureSchedulesForChildren(children, schedulesObj) {
+function ensureSharedSchedule(schedulesObj) {
   const safeSchedules = { ...schedulesObj };
 
-  children.forEach((child) => {
-    if (!safeSchedules[child]) safeSchedules[child] = {};
-
-    plannerData.days.forEach(({ key }) => {
-      const cleanedEntries = flattenEntries(safeSchedules[child][key] ?? []);
-      safeSchedules[child][key] = cleanedEntries.length > 0
-        ? cleanedEntries
-        : JSON.parse(JSON.stringify(plannerData.defaultSchedule[key] ?? []));
-    });
+  plannerData.days.forEach(({ key }) => {
+    const cleanedEntries = flattenEntries(safeSchedules[key] ?? []);
+    safeSchedules[key] = cleanedEntries.length > 0
+      ? cleanedEntries
+      : JSON.parse(JSON.stringify(plannerData.defaultSchedule[key] ?? []));
   });
 
   return safeSchedules;
@@ -461,7 +464,6 @@ function addChild() {
   state.children.push(name);
   state.starsByChild[name]  = 0;
   state.badgesByChild[name] = [];
-  state.schedules[name]     = JSON.parse(JSON.stringify(plannerData.defaultSchedule));
   state.dayByChild[name]    = "mon";
   state.child = name;
   input.value = "";
@@ -479,7 +481,6 @@ function removeChild(name) {
   state.children = state.children.filter(c => c !== name);
   delete state.starsByChild[name];
   delete state.badgesByChild[name];
-  delete state.schedules[name];
   delete state.dayByChild[name];
 
   Object.keys(state.completedTasks).forEach(k => {
@@ -587,7 +588,7 @@ function renderSchedule() {
     <div class="schedule-head">
       <div>
         <h2 class="panel-title">${dayLabel} Schedule</h2>
-        <p class="panel-note">Tap <strong>+⭐ Add</strong> only during that activity's live time slot.</p>
+        <p class="panel-note">Showing the shared family schedule for ${renderChild}. Tap <strong>+⭐ Add</strong> only during that activity's live time slot.</p>
       </div>
       <button id="openScheduleEditorBtn" class="open-editor-btn" type="button">Edit Schedule</button>
     </div>`;
@@ -598,7 +599,7 @@ function renderSchedule() {
     scheduleView.innerHTML = `${header}
       <div class="empty-state">
         <strong>No schedule yet.</strong>
-        <span>Tap "Edit Schedule" to add ${renderChild}'s ${dayLabel} routine.</span>
+        <span>Tap "Edit Schedule" to add the ${dayLabel} family routine.</span>
       </div>`;
     attachScheduleViewEvents();
     return;
@@ -645,7 +646,7 @@ function renderSchedule() {
 }
 
 function getScheduleEntries(child, day) {
-  const raw = state.schedules[child]?.[day] ?? [];
+  const raw = state.schedules[day] ?? [];
   return flattenEntries(raw);
 }
 function attachScheduleViewEvents() {
@@ -886,8 +887,7 @@ function saveScheduleEditor() {
     e.color
   ]);
 
-  if (!state.schedules[state.child]) state.schedules[state.child] = {};
-  state.schedules[state.child][editorDay] = flatEntries;
+  state.schedules[editorDay] = flatEntries;
 
   scheduleSave();
   renderAll();
@@ -896,8 +896,7 @@ function saveScheduleEditor() {
 
 function resetScheduleDay() {
   if (!confirm(`Reset ${state.child}'s ${editorDay.toUpperCase()} schedule to default?`)) return;
-  if (!state.schedules[state.child]) state.schedules[state.child] = {};
-  state.schedules[state.child][editorDay] = JSON.parse(JSON.stringify(plannerData.defaultSchedule[editorDay] ?? []));
+  state.schedules[editorDay] = JSON.parse(JSON.stringify(plannerData.defaultSchedule[editorDay] ?? []));
   scheduleSave();
   renderAll();
   renderScheduleEditorModal();
