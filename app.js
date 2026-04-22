@@ -38,6 +38,14 @@ const db   = getFirestore(app);
 //  (default schedules & tasks shown to every new family)
 // ═══════════════════════════════════════════════════════════════
 const plannerData = {
+  avatarOptions: [
+    { value: "👦", label: "Boy" },
+    { value: "👧", label: "Girl" },
+    { value: "🦸", label: "Hero" },
+    { value: "🦸‍♀️", label: "Heroine" },
+    { value: "🐻", label: "Bear" },
+    { value: "🐼", label: "Panda" },
+  ],
   days: [
     { key: "sun", label: "Sun ☀️" },
     { key: "mon", label: "Mon" },
@@ -74,11 +82,11 @@ const plannerData = {
     sun: [["05:30","Fajr Namaz","Happy weekend start","lavender"],["10:30","Wake up","Peaceful start to the day","peach"],["10:45","Breakfast","Get ready with energy","sky"],["11:00","House chores / Mom help","Help at home with care","mint"],["11:30","Bath","Fresh and clean start","sky"],["12:00","Quran / Study","Learning with focus","rose"],["14:00","Zohar Namaz","Midday prayer and peace","rose"],["14:30","Lunch","Healthy meal + rest","mint"],["15:00","Mobile Time","Short entertainment break","peach"],["16:00","Play time","Fun and relaxing time","peach"],["17:30","Asr Namaz","Evening prayer","rose"],["18:00","Family Time","Talk & relax together","mint"],["19:00","Maghrib Namaz","Evening prayer","lavender"],["21:30","Isha Namaz","End the day peacefully","lavender"],["22:45","Brush your teeth","Freshen up and get ready for bed.","sky"],["23:00","Sleep","Good night and rest well.","lavender"]],
   },
   defaultTasks: [
-    ["Make your bed",          "2 stars"],
-    ["Finish homework",        "3 stars"],
-    ["Read for 15 minutes",    "2 stars"],
-    ["Help set the table",     "1 star"],
-    ["Complete namaz routine", "4 stars"],
+    ["Listen to parents",        "2 stars"],
+    ["Do not hit anyone",        "3 stars"],
+    ["Don’t use bad words",      "2 stars"],
+    ["Help with household chores","2 stars"],
+    ["Clean up your things",     "2 stars"],
   ],
   awards: [
     { id:"starter", icon:"🌟", title:"Shiny Starter",    goal:5,  text:"Earn 5 stars to unlock your first award." },
@@ -97,6 +105,8 @@ let state = {
   tab:      "Schedule",
   children: [],
   schedules:            {},  // { mon:[...], tue:[...], ... }
+  customTasks:          [],
+  avatarsByChild:       {},  // { childName: avatarEmoji }
   starsByChild:         {},  // { childName: number }
   badgesByChild:        {},  // { childName: string[] }
   completedTasks:       {},  // { "child__date__day__index": true }
@@ -217,6 +227,8 @@ async function loadFamilyData() {
     if (snap.exists()) {
       const d = snap.data();
       state.children               = d.children               || [];
+      state.customTasks            = normalizeCustomTasks(d.customTasks || []);
+      state.avatarsByChild         = normalizeAvatarsByChild(d.avatarsByChild || {}, d.children || []);
       state.starsByChild           = d.starsByChild           || {};
       state.badgesByChild          = d.badgesByChild          || {};
       state.completedTasks         = d.completedTasks         || {};
@@ -234,6 +246,8 @@ async function loadFamilyData() {
 
     } else {
       state.children = [];
+      state.customTasks = [];
+      state.avatarsByChild = {};
       state.dayByChild = {};
       state.starsByChild = {};
       state.badgesByChild = {};
@@ -253,6 +267,8 @@ function subscribeToRemoteChanges() {
     if (!snap.exists()) return;
     const d = snap.data();
     state.children               = d.children               || state.children;
+    state.customTasks            = normalizeCustomTasks(d.customTasks || state.customTasks);
+    state.avatarsByChild         = normalizeAvatarsByChild(d.avatarsByChild || state.avatarsByChild, d.children || state.children);
     state.starsByChild           = d.starsByChild           || state.starsByChild;
     state.badgesByChild          = d.badgesByChild          || state.badgesByChild;
     state.completedTasks         = d.completedTasks         || state.completedTasks;
@@ -296,6 +312,8 @@ function buildPayload() {
   // Convert all keys to plain objects (Firestore safe)
   return {
     children:               [...state.children],
+    customTasks:            state.customTasks.map(({ task, stars }) => ({ task, stars })),
+    avatarsByChild:         { ...state.avatarsByChild },
     schedules:              cleanSchedules,
     starsByChild:           { ...state.starsByChild },
     badgesByChild:          { ...state.badgesByChild },
@@ -431,17 +449,27 @@ function renderChildManager() {
   if (!container) return;
   container.innerHTML = `
     <div class="child-manager">
-      <div class="child-manager-title">👧 Manage Children</div>
+      <div class="child-manager-title">Fun Avatars</div>
+      <p class="child-manager-note">Pick a fun avatar for each child so the planner feels like their own space.</p>
       <div class="child-manager-list">
         ${state.children.map(child => `
           <div class="child-tag">
-            <span>${child}</span>
+            <div class="child-tag-main">
+              <span class="child-avatar-badge">${getChildAvatar(child)}</span>
+              <span>${child}</span>
+            </div>
+            <select class="child-avatar-select" data-child="${child}" aria-label="Choose avatar for ${child}">
+              ${buildAvatarOptions(getChildAvatar(child))}
+            </select>
             <button class="remove-child-btn" type="button" data-child="${child}" aria-label="Remove ${child}">✕</button>
           </div>
         `).join("") || `<span style="color:#aaa;font-size:.82rem">No children added yet.</span>`}
       </div>
       <div class="child-manager-add">
         <input id="newChildNameInput" class="child-name-input" type="text" placeholder="Child's name…" maxlength="30" />
+        <select id="newChildAvatarInput" class="child-avatar-select" aria-label="Choose avatar for new child">
+          ${buildAvatarOptions(plannerData.avatarOptions[0]?.value)}
+        </select>
         <button id="addChildBtn" class="add-child-btn" type="button">+ Add</button>
       </div>
     </div>`;
@@ -450,6 +478,9 @@ function renderChildManager() {
   document.getElementById("newChildNameInput").addEventListener("keydown", e => {
     if (e.key === "Enter") addChild();
   });
+  container.querySelectorAll(".child-avatar-select[data-child]").forEach(select => {
+    select.addEventListener("change", () => updateChildAvatar(select.dataset.child, select.value));
+  });
   container.querySelectorAll(".remove-child-btn").forEach(btn =>
     btn.addEventListener("click", () => removeChild(btn.dataset.child))
   );
@@ -457,16 +488,19 @@ function renderChildManager() {
 
 function addChild() {
   const input = document.getElementById("newChildNameInput");
+  const avatarInput = document.getElementById("newChildAvatarInput");
   const name  = input.value.trim();
   if (!name) return;
   if (state.children.includes(name)) { alert(`"${name}" is already added.`); return; }
 
   state.children.push(name);
+  state.avatarsByChild[name] = normalizeAvatarValue(avatarInput?.value);
   state.starsByChild[name]  = 0;
   state.badgesByChild[name] = [];
   state.dayByChild[name]    = "mon";
   state.child = name;
   input.value = "";
+  if (avatarInput) avatarInput.value = plannerData.avatarOptions[0]?.value || "👦";
 
   scheduleSave();
   renderChildManager();
@@ -479,6 +513,7 @@ function removeChild(name) {
   if (!confirm(`Remove "${name}" and all their data?`)) return;
 
   state.children = state.children.filter(c => c !== name);
+  delete state.avatarsByChild[name];
   delete state.starsByChild[name];
   delete state.badgesByChild[name];
   delete state.dayByChild[name];
@@ -491,6 +526,14 @@ function removeChild(name) {
   });
 
   state.child = state.children[0];
+  scheduleSave();
+  renderChildManager();
+  renderSelectors();
+  renderAll();
+}
+
+function updateChildAvatar(name, avatar) {
+  state.avatarsByChild[name] = normalizeAvatarValue(avatar);
   scheduleSave();
   renderChildManager();
   renderSelectors();
@@ -511,7 +554,7 @@ function renderSelectors() {
 
   renderPicker(
     childSelector,
-    state.children.map(c => ({ label: c, value: c })),
+    state.children.map(c => ({ label: `${getChildAvatar(c)} ${c}`, value: c })),
     activeChild,
     value => { state.child = value; renderSelectors(); renderAll(); }
   );
@@ -660,7 +703,7 @@ function attachScheduleViewEvents() {
 //  CHECKLIST RENDER
 // ═══════════════════════════════════════════════════════════════
 function renderChecklist() {
-  const tasks     = plannerData.defaultTasks;
+  const tasks     = getChecklistTasks();
   const capturedChild = state.child;
   const capturedDay   = state.day;
 
@@ -668,7 +711,7 @@ function renderChecklist() {
   taskList.className = "task-list";
   const template = document.getElementById("taskItemTemplate");
 
-  tasks.forEach(([task, stars], index) => {
+  tasks.forEach(({ task, stars, removable }, index) => {
     const key  = `${capturedChild}__${getTodayDateKey()}__${capturedDay}__${index}`;
     const done = Boolean(state.completedTasks[key]);
     const node = template.content.firstElementChild.cloneNode(true);
@@ -678,6 +721,19 @@ function renderChecklist() {
     node.querySelector("strong").textContent = task;
     node.querySelector("small").textContent  = done ? "Completed. Great job!" : "Ready for today";
     node.querySelector(".task-points").textContent = stars;
+
+    if (removable) {
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "task-remove-btn";
+      removeBtn.textContent = "Remove";
+      removeBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        removeCustomTask(task);
+      });
+      node.appendChild(removeBtn);
+    }
 
     node.querySelector("input").addEventListener("change", () => {
       toggleTask(key, node, stars, capturedChild);
@@ -690,11 +746,26 @@ function renderChecklist() {
       <section class="task-panel">
         <h2 class="panel-title">Checklist</h2>
         <p class="panel-note">Finish little missions and collect stars.</p>
+        <div class="custom-task-bar">
+          <input id="customTaskInput" class="custom-task-input" type="text" placeholder="Add your own checklist task">
+          <select id="customTaskStars" class="custom-task-stars" aria-label="Choose star value">
+            <option value="1">1 star</option>
+            <option value="2" selected>2 stars</option>
+            <option value="3">3 stars</option>
+            <option value="4">4 stars</option>
+            <option value="5">5 stars</option>
+          </select>
+          <button id="addCustomTaskBtn" class="custom-task-btn" type="button">Add Task</button>
+        </div>
       </section>
       <aside class="side-panel">
         <div class="focus-card">
           <h3>Focus Timer</h3>
-          <p>15 minutes of superhero concentration.</p>
+          <p>Choose the timer length, then finish it to earn 1 star.</p>
+          <div class="timer-settings">
+            <label class="timer-label" for="timerMinutesInput">Minutes</label>
+            <input id="timerMinutesInput" class="timer-minutes-input" type="number" min="1" max="180" step="1" value="${Math.max(1, Math.round(state.timer.duration / 60))}" ${state.timer.intervalId ? "disabled" : ""}>
+          </div>
           <div class="timer-ring" id="timerRing">
             <div class="timer-value" id="timerValue">${formatTime(state.timer.remaining)}</div>
           </div>
@@ -707,6 +778,11 @@ function renderChecklist() {
     </div>`;
 
   checklistView.querySelector(".task-panel").appendChild(taskList);
+  checklistView.querySelector("#addCustomTaskBtn").addEventListener("click", addCustomTask);
+  checklistView.querySelector("#customTaskInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") addCustomTask();
+  });
+  checklistView.querySelector("#timerMinutesInput").addEventListener("change", handleTimerDurationChange);
   checklistView.querySelector("#startTimerBtn").addEventListener("click", toggleTimer);
   checklistView.querySelector("#resetTimerBtn").addEventListener("click", resetTimer);
   updateTimerVisual();
@@ -741,6 +817,12 @@ function renderStars() {
   const unlocked = plannerData.awards.filter(a => stars >= a.goal).map(a => a.id);
   state.badgesByChild[state.child] = unlocked;
   badgeCount.textContent = unlocked.length;
+  const streakData = getChecklistStreakSummary(state.child);
+  const weeklyProgress = getWeeklyScheduleProgress(state.child);
+  const starsToSmallReward = Math.max(0, 50 - stars);
+  const starsToBigReward = Math.max(0, 100 - stars);
+  const smallRewardEarned = stars >= 50;
+  const bigRewardEarned = stars >= 100;
 
   const cards = plannerData.awards.map(award => {
     const ok = unlocked.includes(award.id);
@@ -762,19 +844,39 @@ function renderStars() {
       </section>
       <aside class="side-panel">
         <div class="focus-card">
-          <h3>Reward Chest</h3>
-          <p>Every 10 stars = one fun reward choice.</p>
+          <h3>Weekly Progress</h3>
+          <p>Schedule star progress for this week.</p>
+          <div class="progress-meta">
+            <strong>${weeklyProgress.percent}%</strong>
+            <span>${weeklyProgress.completed}/${weeklyProgress.total} schedule stars</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" style="width:${weeklyProgress.percent}%"></div>
+          </div>
+        </div>
+        <div class="focus-card">
+          <h3>Reward System</h3>
+          <p>Stars turn into gifts as the child keeps doing good work.</p>
           <div class="streak-row">
-            <div class="streak-bubble">${Math.floor(stars/10)} reward${Math.floor(stars/10)===1?"":"s"}</div>
-            <div class="streak-bubble">${10 - (stars % 10 || 10)} to next</div>
+            <div class="streak-bubble">${smallRewardEarned ? "Small gift earned" : `${starsToSmallReward} to small gift`}</div>
+            <div class="streak-bubble">${bigRewardEarned ? "Big gift earned" : `${starsToBigReward} to big gift`}</div>
           </div>
         </div>
         <div class="reward-banner">
           <div>
-            <strong>Today's prize idea</strong>
-            <span>Pick from stickers, extra play time, drawing time, or a family treat.</span>
+            <strong>Gift Rule</strong>
+            <span>50 stars = small gift. 100 stars = big gift.</span>
           </div>
           <div class="badge-icon">🎁</div>
+        </div>
+        <div class="streak-card">
+          <h3>Streak System</h3>
+          <p>Keep completing the same good habit on consecutive days to build a streak.</p>
+          <div class="streak-row">
+            <div class="streak-bubble">${streakData.longestCurrent} day streak</div>
+            <div class="streak-bubble">${streakData.milestoneText}</div>
+          </div>
+          <div class="streak-list">${streakData.itemsHtml}</div>
         </div>
       </aside>
     </div>`;
@@ -920,7 +1022,7 @@ function toggleTimer() {
       state.timer.intervalId = null;
       state.timer.remaining  = 0;
       updateTimerVisual();
-      addStarsForChild(state.child, 3);
+      addStarsForChild(state.child, 1);
       scheduleSave();
       renderAll();
       launchConfetti();
@@ -934,6 +1036,14 @@ function resetTimer() {
   state.timer.intervalId = null;
   state.timer.remaining  = state.timer.duration;
   renderChecklist();
+}
+
+function handleTimerDurationChange(event) {
+  const minutes = Math.min(180, Math.max(1, Number(event.target.value) || 15));
+  state.timer.duration = minutes * 60;
+  state.timer.remaining = state.timer.duration;
+  event.target.value = String(minutes);
+  updateTimerVisual();
 }
 
 function updateTimerVisual() {
@@ -979,6 +1089,162 @@ function addStarsForChild(child, amount) {
   state.starsByChild[child] = Math.max(0, (state.starsByChild[child] ?? 0) + amount);
 }
 
+function normalizeAvatarsByChild(avatarsByChild, children) {
+  const normalized = {};
+  (children || []).forEach((child) => {
+    normalized[child] = normalizeAvatarValue(avatarsByChild?.[child]);
+  });
+  return normalized;
+}
+
+function normalizeAvatarValue(value) {
+  const validValues = plannerData.avatarOptions.map((option) => option.value);
+  return validValues.includes(value) ? value : plannerData.avatarOptions[0]?.value || "👦";
+}
+
+function getChildAvatar(child) {
+  return normalizeAvatarValue(state.avatarsByChild?.[child]);
+}
+
+function buildAvatarOptions(selectedAvatar) {
+  return plannerData.avatarOptions
+    .map(({ value, label }) => `<option value="${value}"${value === normalizeAvatarValue(selectedAvatar) ? " selected" : ""}>${value} ${label}</option>`)
+    .join("");
+}
+
+function normalizeCustomTasks(tasks) {
+  if (!Array.isArray(tasks)) return [];
+
+  return tasks
+    .map((item) => {
+      if (typeof item === "string") {
+        const task = item.trim();
+        return task ? { task, stars: 2 } : null;
+      }
+
+      if (item && typeof item === "object") {
+        const task = String(item.task ?? "").trim();
+        const stars = Math.min(5, Math.max(1, Number(item.stars) || 2));
+        return task ? { task, stars } : null;
+      }
+
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function taskToStarsLabel(value) {
+  const stars = Math.min(5, Math.max(1, Number(value) || 2));
+  return `${stars} star${stars === 1 ? "" : "s"}`;
+}
+
+function getChecklistStreakSummary(child) {
+  const todayKey = getTodayDateKey();
+  const taskStreaks = plannerData.defaultTasks.map(([taskName], taskIndex) => {
+    const completedDates = Object.keys(state.completedTasks)
+      .filter(key => key.startsWith(`${child}__`) && key.endsWith(`__${taskIndex}`))
+      .map(key => key.split("__")[1]);
+
+    const streak = calculateCurrentStreak(completedDates, todayKey);
+    return { taskName, streak };
+  });
+
+  const longestCurrent = Math.max(0, ...taskStreaks.map(item => item.streak));
+  const milestoneText = longestCurrent >= 3 ? "3-day streak reached" : `${Math.max(0, 3 - longestCurrent)} days to 3-day streak`;
+  const itemsHtml = taskStreaks
+    .filter(item => item.streak > 0)
+    .map(item => `<div class="streak-item"><strong>${item.taskName}</strong><span>${item.streak} day${item.streak === 1 ? "" : "s"} in a row</span></div>`)
+    .join("") || `<div class="streak-item"><strong>No streak yet</strong><span>Complete a task on consecutive days to start one.</span></div>`;
+
+  return { longestCurrent, milestoneText, itemsHtml };
+}
+
+function calculateCurrentStreak(dateKeys, todayKey) {
+  const uniqueDates = new Set(dateKeys);
+  if (!uniqueDates.has(todayKey)) return 0;
+
+  let streak = 0;
+  let currentDate = new Date(`${todayKey}T00:00:00`);
+
+  while (uniqueDates.has(formatDateKey(currentDate))) {
+    streak += 1;
+    currentDate.setDate(currentDate.getDate() - 1);
+  }
+
+  return streak;
+}
+
+function getChecklistTasks() {
+  const baseTasks = plannerData.defaultTasks.map(([task, stars]) => ({
+    task,
+    stars,
+    removable: false,
+  }));
+
+  const extraTasks = normalizeCustomTasks(state.customTasks).map(({ task, stars }) => ({
+    task,
+    stars: taskToStarsLabel(stars),
+    removable: true,
+  }));
+
+  return [...baseTasks, ...extraTasks];
+}
+
+function addCustomTask() {
+  const input = document.getElementById("customTaskInput");
+  const starsInput = document.getElementById("customTaskStars");
+  if (!input || !starsInput) return;
+
+  const taskName = input.value.trim();
+  const starValue = Math.min(5, Math.max(1, Number(starsInput.value) || 2));
+  const allTaskNames = getChecklistTasks().map((item) => item.task.toLowerCase());
+  if (!taskName) return;
+  if (allTaskNames.includes(taskName.toLowerCase())) {
+    alert("That task already exists.");
+    return;
+  }
+
+  state.customTasks.push({ task: taskName, stars: starValue });
+  input.value = "";
+  starsInput.value = "2";
+  scheduleSave();
+  renderChecklist();
+}
+
+function removeCustomTask(taskName) {
+  if (!confirm(`Remove "${taskName}" from the checklist?`)) return;
+
+  const taskIndex = getChecklistTasks().findIndex((item) => item.task === taskName);
+  state.customTasks = normalizeCustomTasks(state.customTasks).filter((item) => item.task !== taskName);
+
+  if (taskIndex >= 0) {
+    Object.keys(state.completedTasks).forEach((key) => {
+      if (key.startsWith(`${state.child}__`) && key.endsWith(`__${taskIndex}`)) {
+        delete state.completedTasks[key];
+      }
+    });
+  }
+
+  scheduleSave();
+  renderChecklist();
+  renderStars();
+}
+
+function getWeeklyScheduleProgress(child) {
+  const weekDates = getCurrentWeekDateKeys();
+  const total = plannerData.days.reduce((sum, { key }) => sum + getScheduleEntries(child, key).length, 0);
+
+  const completed = Object.keys(state.completedScheduleStars).filter((key) => {
+    if (!key.startsWith(`${child}__`)) return false;
+    const parts = key.split("__");
+    const dateKey = parts[1];
+    return weekDates.includes(dateKey);
+  }).length;
+
+  const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+  return { completed, total, percent };
+}
+
 resetProgressBtn.addEventListener("click", () => {
   if (!confirm(`Reset all stars, badges, and tasks for ${state.child}?`)) return;
   state.starsByChild[state.child]  = 0;
@@ -1004,6 +1270,20 @@ function getTodayWeekdayKey() { return ["sun","mon","tue","wed","thu","fri","sat
 function getCurrentMinutes()  { const n = new Date(); return n.getHours()*60+n.getMinutes(); }
 function timeToMinutes(t)     { const [h,m]=String(t).split(":"); return Number(h)*60+Number(m); }
 function formatTime(s)        { return `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`; }
+function formatDateKey(date)  { return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`; }
+function getCurrentWeekDateKeys() {
+  const today = new Date();
+  const dayIndex = today.getDay();
+  const sunday = new Date(today);
+  sunday.setHours(0, 0, 0, 0);
+  sunday.setDate(today.getDate() - dayIndex);
+
+  return Array.from({ length: 7 }, (_, offset) => {
+    const current = new Date(sunday);
+    current.setDate(sunday.getDate() + offset);
+    return formatDateKey(current);
+  });
+}
 function escAttr(v)           {
   return String(v)
     .replaceAll("&","&amp;")
